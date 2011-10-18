@@ -23,6 +23,7 @@
 
 @property (nonatomic, readonly) NSUInteger port;
 @property (nonatomic, assign) id<MBWebSocketServerDelegate> delegate;
+@property (nonatomic, readonly) BOOL connected;
 @end
 
 

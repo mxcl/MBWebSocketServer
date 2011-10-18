@@ -41,6 +41,10 @@
     }
 }
 
+- (BOOL)connected {
+    return client != nil;
+}
+
 - (void)respondToHandshake:(NSData *)data {
     NSString *string = [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease];
 
@@ -169,6 +173,7 @@
 
 @synthesize port;
 @synthesize delegate;
+@dynamic connected;
 @end
 
 

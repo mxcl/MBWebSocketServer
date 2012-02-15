@@ -7,6 +7,8 @@ work how you need it too. But it’s nice and simple so just get straight in.
 
 Tested against Chrome 10/2011. Probably will only work against that.
 
+If you want a client implementation, use Square’s SocketRocket.
+
 Example Usage
 -------------
 ```objc

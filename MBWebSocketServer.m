@@ -56,7 +56,7 @@
     }
     
     NSString *response = [NSString stringWithFormat:
-                          @"HTTP/1.1 101 Switching Protocols\r\n"
+                          @"HTTP/1.1 101 Web Socket Protocol Handshake\r\n"
                           "Upgrade: websocket\r\n"
                           "Connection: Upgrade\r\n"
                           "Sec-WebSocket-Accept: %@\r\n\r\n",

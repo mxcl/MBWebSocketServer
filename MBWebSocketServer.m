@@ -18,6 +18,12 @@
 - (id)sha1base64;
 @end
 
+static unsigned long long ntohll(unsigned long long v) {
+    union { unsigned long lv[2]; unsigned long long llv; } u;
+    u.llv = v;
+    return ((unsigned long long)ntohl(u.lv[0]) << 32) | (unsigned long long)ntohl(u.lv[1]);
+}
+
 
 
 @implementation MBWebSocketServer
@@ -50,7 +56,7 @@
 
     NSArray *strings = [string componentsSeparatedByString:@"\r\n"];
     
-    if (strings.count == 0 || ![[strings objectAtIndex:0] isEqualToString:@"GET / HTTP/1.1"]) {
+    if (strings.count == 0 || ![strings[0] isEqualToString:@"GET / HTTP/1.1"]) {
         NSLog(@"MBWebSocketServer invalid handshake from client");
         return [self close];
     }
@@ -65,7 +71,7 @@
     [client writeData:[response dataUsingEncoding:NSUTF8StringEncoding] withTimeout:-1 tag:2];
 }
 
-- (unsigned int)readFrame:(const char*)bytes {
+- (uint64_t)readFrame:(const char*)bytes block:(void (^)(char *data, NSUInteger nbytes))block {
     if (!bytes[0] & 0x81)
         @throw @"Cannot handle this websocket frame format!";
     
@@ -73,15 +79,19 @@
         @throw @"Can only handle websocket frames with masks!";
     
     unsigned n = 2;
-    int16_t N = bytes[1] & 0x7f;
+    uint64_t N = ((unsigned char)bytes[1]) & 0x7f;
     switch (N) {
         case 126: {
-            N = ntohs((short) bytes[3] << 8 | bytes[2]);
+            uint16_t *p = (uint16_t *)bytes + 2;
+            N = ntohs(*p);
             n += 2;
             break;
         }
-        case 127:
-            @throw @"8 byte lengths unsupported currently!";
+        case 127: {
+            uint64_t *p = (uint64_t *)bytes + 2;
+            N = ntohll(*p);
+            n += 8;
+        }
         default:
             break;
     }
@@ -91,16 +101,21 @@
     for (int x = 0; x < N; ++x)
         unmaskedData[x] = bytes[x+n+4] ^ mask[x%4];
     
-    [delegate webSocketServer:self didReceiveData:[NSData dataWithBytes:unmaskedData length:N]];
-    
+    block(unmaskedData, N);
+
     return n + 4 + N;
 }
 
-- (void)readFrames:(NSData *)data {
+- (void)readFrames:(NSData *)indata {
     @try {
+        NSMutableData *data = [NSMutableData new];
         uint x = 0;
-        while (x < data.length)
-            x += [self readFrame:data.bytes + x];
+        while (x < indata.length) {
+            x += [self readFrame:indata.bytes + x block:^(char *rawdata, NSUInteger length){
+                [data appendBytes:rawdata length:length];
+            }];
+        }
+        [delegate webSocketServer:self didReceiveData:data];
     }
     @catch (id e) {
         NSLog(@"%@", e);
@@ -108,8 +123,9 @@
 }
 
 - (void)send:(NSData *)payload {
-    if ([payload isKindOfClass:[NSString class]])
-         payload = [[(NSString *)payload dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+    if ([payload isKindOfClass:[NSString class]]) {
+        payload = [[(NSString *)payload dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+    }
     
     NSMutableData *data = [NSMutableData dataWithLength:4];
     char *header = data.mutableBytes;
@@ -185,8 +201,8 @@
         //TODO better efficiency!
         NSArray *parts = [line componentsSeparatedByString:@":"];
         if (parts.count == 2) {
-            if ([[parts objectAtIndex:0] isEqualToString:@"Sec-WebSocket-Key"])
-                return [[parts objectAtIndex:1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];;
+            if ([parts[0] isEqualToString:@"Sec-WebSocket-Key"])
+                return [parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];;
         }
     }
     return nil;

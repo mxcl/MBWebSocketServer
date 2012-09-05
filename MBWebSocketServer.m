@@ -71,7 +71,7 @@ static unsigned long long ntohll(unsigned long long v) {
     [client writeData:[response dataUsingEncoding:NSUTF8StringEncoding] withTimeout:-1 tag:2];
 }
 
-- (uint64_t)readFrame:(const char*)bytes block:(void (^)(char *data, NSUInteger nbytes))block {
+- (uint64_t)readFrame:(const unsigned char*)bytes block:(void (^)(char *data, NSUInteger nbytes))block {
     if (!bytes[0] & 0x81)
         @throw @"Cannot handle this websocket frame format!";
     
@@ -79,16 +79,16 @@ static unsigned long long ntohll(unsigned long long v) {
         @throw @"Can only handle websocket frames with masks!";
     
     unsigned n = 2;
-    uint64_t N = ((unsigned char)bytes[1]) & 0x7f;
+    uint64_t N = bytes[1] & 0x7f;
     switch (N) {
         case 126: {
-            uint16_t *p = (uint16_t *)bytes + 2;
+            uint16_t *p = (uint16_t *)(bytes + 2);
             N = ntohs(*p);
             n += 2;
             break;
         }
         case 127: {
-            uint64_t *p = (uint64_t *)bytes + 2;
+            uint64_t *p = (uint64_t *)(bytes + 2);
             N = ntohll(*p);
             n += 8;
         }
@@ -96,7 +96,7 @@ static unsigned long long ntohll(unsigned long long v) {
             break;
     }
     
-    const char *mask = bytes + n;
+    const unsigned char *mask = bytes + n;
     char unmaskedData[N];
     for (int x = 0; x < N; ++x)
         unmaskedData[x] = bytes[x+n+4] ^ mask[x%4];
@@ -127,14 +127,25 @@ static unsigned long long ntohll(unsigned long long v) {
         payload = [[(NSString *)payload dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
     }
     
-    NSMutableData *data = [NSMutableData dataWithLength:4];
+    NSMutableData *data = [NSMutableData dataWithLength:10];
     char *header = data.mutableBytes;
     header[0] = 0x81;
 
-    if (payload.length > 125) {
+    if (payload.length > 65535) {
+        header[1] = 127;
+        header[2] = (payload.length >> 56) & 255;
+        header[3] = (payload.length >> 48) & 255;
+        header[4] = (payload.length >> 40) & 255;
+        header[5] = (payload.length >> 32) & 255;
+        header[6] = (payload.length >> 24) & 255;
+        header[7] = (payload.length >> 16) & 255;
+        header[8] = (payload.length >>  8) & 255;
+        header[9] = payload.length & 255;
+    } else if (payload.length > 125) {
         header[1] = 126;
-        header[2] = payload.length >> 8;
-        header[3] = payload.length & 0xff;
+        header[2] = (payload.length >> 8) & 255;
+        header[3] = payload.length & 255;
+        data.length = 4;
     } else {
         header[1] = payload.length;
         data.length = 2;

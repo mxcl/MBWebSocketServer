@@ -27,38 +27,37 @@ static unsigned long long ntohll(unsigned long long v) {
 
 
 @implementation MBWebSocketServer
+@dynamic connected;
+@dynamic clientCount;
 
-- (id)initWithPort:(NSUInteger)aport delegate:(id<MBWebSocketServerDelegate>)adelegate {
-    port = aport;
-    delegate = adelegate;
+- (id)initWithPort:(NSUInteger)port delegate:(id<MBWebSocketServerDelegate>)delegate {
+    _port = port;
+    _delegate = delegate;
     socket = [[AsyncSocket alloc] initWithDelegate:self];
+    clients = [NSMutableArray new];
 
     NSError *error = nil; //TODO
-    [socket acceptOnPort:port error:&error];
+    [socket acceptOnPort:_port error:&error];
 
     return self;
 }
 
-- (void)close {
-    if (client) {
-        [client release];
-        client = nil;
-        [delegate webSocketServerDidDisconnect:self];
-    }
-}
-
 - (BOOL)connected {
-    return client != nil;
+    return clients.count > 0;
 }
 
-- (void)respondToHandshake:(NSData *)data {
-    NSString *string = [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease];
+- (NSUInteger)clientCount {
+    return clients.count;
+}
+
+- (void)respondToHandshake:(NSData *)data client:(AsyncSocket *)client {
+    NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 
     NSArray *strings = [string componentsSeparatedByString:@"\r\n"];
     
     if (strings.count == 0 || ![strings[0] isEqualToString:@"GET / HTTP/1.1"]) {
         NSLog(@"MBWebSocketServer invalid handshake from client");
-        return [self close];
+        return [client disconnect];
     }
     
     NSString *response = [NSString stringWithFormat:
@@ -106,23 +105,21 @@ static unsigned long long ntohll(unsigned long long v) {
     return n + 4 + N;
 }
 
-- (void)readFrames:(NSData *)indata {
-    @try {
-        NSMutableData *data = [NSMutableData new];
-        uint x = 0;
-        while (x < indata.length) {
-            x += [self readFrame:indata.bytes + x block:^(char *rawdata, NSUInteger length){
-                [data appendBytes:rawdata length:length];
-            }];
-        }
-        [delegate webSocketServer:self didReceiveData:data];
+- (NSData *)readFrames:(NSData *)indata {
+    NSMutableData *data = [NSMutableData data];
+    uint x = 0;
+    while (x < indata.length) {
+        x += [self readFrame:indata.bytes + x block:^(char *rawdata, NSUInteger length){
+            [data appendBytes:rawdata length:length];
+        }];
     }
-    @catch (id e) {
-        NSLog(@"%@", e);
-    }
+    return data;
 }
 
-- (void)send:(NSData *)payload {
+- (void)send:(NSData *)payload client:(id)client {
+    if (!payload.length)
+        return;
+
     if ([payload isKindOfClass:[NSString class]]) {
         payload = [[(NSString *)payload dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
     }
@@ -152,55 +149,52 @@ static unsigned long long ntohll(unsigned long long v) {
     }
 
     [data appendData:payload];
-    [client writeData:data withTimeout:-1 tag:3];
+
+    NSArray *cc = [client isKindOfClass:[NSArray class]] ? client : client ? @[client] : clients;
+    for (AsyncSocket *client in cc)
+        [client writeData:data withTimeout:-1 tag:3];
+}
+
+- (void)send:(id)payload {
+    [self send:payload client:nil];
 }
 
 
 #pragma mark - ASyncSocketDelegate
 
-- (void)onSocket:(AsyncSocket *)sock didAcceptNewSocket:(AsyncSocket *)aclient {
-    client = [aclient retain];
+- (void)onSocket:(AsyncSocket *)sock didAcceptNewSocket:(AsyncSocket *)client {
+    [clients addObject:client];
     [client readDataWithTimeout:-1 tag:1];
 }
 
-- (void)onSocket:(AsyncSocket *)sock didReadData:(NSData *)data withTag:(long)tag
+- (void)onSocket:(AsyncSocket *)client didReadData:(NSData *)data withTag:(long)tag
 {    
     if (tag == 1) { // waiting for handshake
-        [self respondToHandshake:data];
+        [self respondToHandshake:data client:client];
     } else {
-        [self readFrames:data];
+        [_delegate webSocketServer:self didReceiveData:[self readFrames:data]];
         [client readDataWithTimeout:-1 tag:3];
     }
 }
 
-- (void)onSocket:(AsyncSocket *)sock didWriteDataWithTag:(long)tag {
-    if (sock == client) {
-        switch (tag) {
-            case 2:
-                [delegate webSocketServerDidConnect:self];
-            case 3:
-                [client readDataWithTimeout:-1 tag:3];
+- (void)onSocket:(AsyncSocket *)client didWriteDataWithTag:(long)tag {
+    switch (tag) {
+        case 2: {
+            id response = [_delegate webSocketServerDidAcceptConnection:self];
+            [self send:response client:client];
+            // fall through
         }
+        case 3:
+            [client readDataWithTimeout:-1 tag:3];
     }
 }
 
-- (void)onSocketDidDisconnect:(AsyncSocket *)sock {
-    if (sock == client)
-        [self close];
+- (void)onSocketDidDisconnect:(AsyncSocket *)client {
+    [clients removeObjectIdenticalTo:client];
+    if (clients.count == 0)
+        [_delegate webSocketServerLastClientDisconnected:self];
 }
 
-
-#pragma mark - Boilerplate
-
-- (void)dealloc {
-    [socket release];
-    [client release];
-    [super dealloc];
-}
-
-@synthesize port;
-@synthesize delegate;
-@dynamic connected;
 @end
 
 
@@ -253,7 +247,7 @@ static unsigned long long ntohll(unsigned long long v) {
     }
     out[-2] = map[(input[19] & 0x0F) << 2];
     out[-1] = '=';
-    return [[[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding] autorelease];
+    return [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
 }
 
 @end

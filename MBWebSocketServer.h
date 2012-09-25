@@ -11,10 +11,8 @@
 
 
 @interface MBWebSocketServer : NSObject {
-    NSUInteger port;
-    id<MBWebSocketServerDelegate> delegate;
     AsyncSocket *socket;
-    AsyncSocket *client;
+    NSMutableArray *clients;
 }
 
 - (id)initWithPort:(NSUInteger)port delegate:(id<MBWebSocketServerDelegate>)delegate;
@@ -22,13 +20,15 @@
 - (void)send:(id)utf8StringOrData;
 
 @property (nonatomic, readonly) NSUInteger port;
-@property (nonatomic, assign) id<MBWebSocketServerDelegate> delegate;
+@property (nonatomic, weak) id<MBWebSocketServerDelegate> delegate;
 @property (nonatomic, readonly) BOOL connected;
+@property (nonatomic, readonly) NSUInteger clientCount;
 @end
 
 
 @protocol MBWebSocketServerDelegate
-- (void)webSocketServerDidConnect:(MBWebSocketServer *)webSocket;
-- (void)webSocketServerDidDisconnect:(MBWebSocketServer *)webSocket;
+// return a response for this client, NSData or NSString are valid
+- (id)webSocketServerDidAcceptConnection:(MBWebSocketServer *)webSocket;
+- (void)webSocketServerLastClientDisconnected:(MBWebSocketServer *)webSocket;
 - (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data;
 @end

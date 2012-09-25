@@ -1,13 +1,20 @@
 MBWebSocket
 ===========
-So far just a *server implementation*, (you cannot instantiate an instance that does not bind to a port). Also, the server can only manage a single connection at a time.
+A websocket *server implementation*, (you cannot instantiate an instance that
+does not bind to a port).
 
-So, seriously, you will probably have to do some work to this class to make it
-work how you need it too. But it’s nice and simple so just get straight in.
+NOTE! I have not tested it extensively and there are many old WS versions. So
+you may well have to hack it to make it work. But! There is not much code.
+And! I believe it is quite readable. I will help! Mail me!
 
-Tested against Chrome 10/2011. Probably will only work against that.
+Tested against recent Chrome, Safari and Firefox versions. Only tested on Mac.
 
 If you want a client implementation, use Square’s SocketRocket.
+
+Requirements
+------------
+* ARC or Garbage Collection
+* Xcode 4.5
 
 Example Usage
 -------------

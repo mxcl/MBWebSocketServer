@@ -29,6 +29,6 @@
 @protocol MBWebSocketServerDelegate
 // return a response for this client, NSData or NSString are valid
 - (id)webSocketServerDidAcceptConnection:(MBWebSocketServer *)webSocket;
-- (void)webSocketServerLastClientDisconnected:(MBWebSocketServer *)webSocket;
+- (void)webSocketServerClientDisconnected:(MBWebSocketServer *)webSocket;
 - (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data;
 @end

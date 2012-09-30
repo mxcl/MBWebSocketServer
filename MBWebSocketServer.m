@@ -191,8 +191,7 @@ static unsigned long long ntohll(unsigned long long v) {
 
 - (void)onSocketDidDisconnect:(AsyncSocket *)client {
     [clients removeObjectIdenticalTo:client];
-    if (clients.count == 0)
-        [_delegate webSocketServerLastClientDisconnected:self];
+    [_delegate webSocketServerClientDisconnected:self];
 }
 
 @end

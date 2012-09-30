@@ -70,23 +70,28 @@ static unsigned long long ntohll(unsigned long long v) {
     [client writeData:[response dataUsingEncoding:NSUTF8StringEncoding] withTimeout:-1 tag:2];
 }
 
-- (uint64_t)readFrame:(const unsigned char*)bytes block:(void (^)(char *data, NSUInteger nbytes))block {
+- (uint64_t)readFrame:(const unsigned char*)bytes length:(NSUInteger)length block:(void (^)(char *data, NSUInteger nbytes))block {
+    if (length < 2)
+        @throw @"Bad frame";
     if (!bytes[0] & 0x81)
         @throw @"Cannot handle this websocket frame format!";
-    
     if (!bytes[1] & 0x80)
         @throw @"Can only handle websocket frames with masks!";
-    
+
     unsigned n = 2;
     uint64_t N = bytes[1] & 0x7f;
     switch (N) {
         case 126: {
+            if (length < 4)
+                @throw @"Bad frame";
             uint16_t *p = (uint16_t *)(bytes + 2);
             N = ntohs(*p);
             n += 2;
             break;
         }
         case 127: {
+            if (length < 10)
+                @throw @"Bad frame";
             uint64_t *p = (uint64_t *)(bytes + 2);
             N = ntohll(*p);
             n += 8;
@@ -94,12 +99,15 @@ static unsigned long long ntohll(unsigned long long v) {
         default:
             break;
     }
-    
+
+    if (length < n + 4 + N)
+        @throw @"Bad frame";
+
     const unsigned char *mask = bytes + n;
     char unmaskedData[N];
     for (int x = 0; x < N; ++x)
         unmaskedData[x] = bytes[x+n+4] ^ mask[x%4];
-    
+
     block(unmaskedData, N);
 
     return n + 4 + N;
@@ -109,7 +117,7 @@ static unsigned long long ntohll(unsigned long long v) {
     NSMutableData *data = [NSMutableData data];
     uint x = 0;
     while (x < indata.length) {
-        x += [self readFrame:indata.bytes + x block:^(char *rawdata, NSUInteger length){
+        x += [self readFrame:indata.bytes + x length:indata.length block:^(char *rawdata, NSUInteger length){
             [data appendBytes:rawdata length:length];
         }];
     }

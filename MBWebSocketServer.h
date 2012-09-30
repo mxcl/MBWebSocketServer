@@ -1,23 +1,24 @@
 // Originally created by Max Howell in October 2011.
 // This class is in the public domain.
 //
-// MBWebSocketServer accepts client connections as soon as it is created.
-// MBWebSocketServer only accepts a single client connection at any time.
+// MBWebSocketServer accepts client connections as soon as it is instantiated.
 // Implementated against: http://tools.ietf.org/id/draft-ietf-hybi-thewebsocketprotocol-10
 
-#import <CoreFoundation/CoreFoundation.h>
+#import "AsyncSocket.h"
+
 @protocol MBWebSocketServerDelegate;
-@class AsyncSocket;
 
 
 @interface MBWebSocketServer : NSObject {
     AsyncSocket *socket;
-    NSMutableArray *clients;
+    NSMutableArray *connections;
 }
 
 - (id)initWithPort:(NSUInteger)port delegate:(id<MBWebSocketServerDelegate>)delegate;
 
-- (void)send:(id)utf8StringOrData;
+// Sends this data to all open connections. The object must respond to
+// webSocketFrameData. We provide implementations for NSData and NSString.
+- (void)send:(id)object;
 
 @property (nonatomic, readonly) NSUInteger port;
 @property (nonatomic, weak) id<MBWebSocketServerDelegate> delegate;
@@ -27,8 +28,18 @@
 
 
 @protocol MBWebSocketServerDelegate
-// return a response for this client, NSData or NSString are valid
-- (id)webSocketServerDidAcceptConnection:(MBWebSocketServer *)webSocket;
-- (void)webSocketServerClientDisconnected:(MBWebSocketServer *)webSocket;
-- (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data;
+- (void)webSocketServer:(MBWebSocketServer *)webSocketServer didAcceptConnection:(AsyncSocket *)connection;
+- (void)webSocketServerClientDisconnected:(MBWebSocketServer *)webSocketServer;
+- (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data fromConnection:(AsyncSocket *)connection;
+@end
+
+
+@interface AsyncSocket (MBWebSocketServer)
+- (void)writeWebSocketFrame:(id)object;
+@end
+
+
+@interface NSData (MBWebSocketServer)
+- (id)webSocketFrameData;
++ (NSData *)dataWithWebSocketFrameData:(NSData *)webSocketData;
 @end

@@ -1,7 +1,6 @@
 // Originally created by Max Howell in October 2011.
 // This class is in the public domain.
 
-#import "AsyncSocket.h"
 #import <CommonCrypto/CommonDigest.h>
 #import "MBWebSocketServer.h"
 
@@ -34,20 +33,25 @@ static unsigned long long ntohll(unsigned long long v) {
     _port = port;
     _delegate = delegate;
     socket = [[AsyncSocket alloc] initWithDelegate:self];
-    clients = [NSMutableArray new];
+    connections = [NSMutableArray new];
 
-    NSError *error = nil; //TODO
+    NSError *error = nil;
     [socket acceptOnPort:_port error:&error];
+
+    if (error) {
+        NSLog(@"MBWebSockerServer failed to initialize: %@", error);
+        return nil;
+    }
 
     return self;
 }
 
 - (BOOL)connected {
-    return clients.count > 0;
+    return connections.count > 0;
 }
 
 - (NSUInteger)clientCount {
-    return clients.count;
+    return connections.count;
 }
 
 - (void)respondToHandshake:(NSData *)data client:(AsyncSocket *)client {
@@ -62,143 +66,50 @@ static unsigned long long ntohll(unsigned long long v) {
     
     NSString *response = [NSString stringWithFormat:
                           @"HTTP/1.1 101 Web Socket Protocol Handshake\r\n"
-                          "Upgrade: websocket\r\n"
-                          "Connection: Upgrade\r\n"
-                          "Sec-WebSocket-Accept: %@\r\n\r\n",
+                           "Upgrade: websocket\r\n"
+                           "Connection: Upgrade\r\n"
+                           "Sec-WebSocket-Accept: %@\r\n\r\n",
                           [strings secWebSocketAccept]];
     
     [client writeData:[response dataUsingEncoding:NSUTF8StringEncoding] withTimeout:-1 tag:2];
 }
 
-- (uint64_t)readFrame:(const unsigned char*)bytes length:(NSUInteger)length block:(void (^)(char *data, NSUInteger nbytes))block {
-    if (length < 2)
-        @throw @"Bad frame";
-    if (!bytes[0] & 0x81)
-        @throw @"Cannot handle this websocket frame format!";
-    if (!bytes[1] & 0x80)
-        @throw @"Can only handle websocket frames with masks!";
-
-    unsigned n = 2;
-    uint64_t N = bytes[1] & 0x7f;
-    switch (N) {
-        case 126: {
-            if (length < 4)
-                @throw @"Bad frame";
-            uint16_t *p = (uint16_t *)(bytes + 2);
-            N = ntohs(*p);
-            n += 2;
-            break;
-        }
-        case 127: {
-            if (length < 10)
-                @throw @"Bad frame";
-            uint64_t *p = (uint64_t *)(bytes + 2);
-            N = ntohll(*p);
-            n += 8;
-        }
-        default:
-            break;
-    }
-
-    if (length < n + 4 + N)
-        @throw @"Bad frame";
-
-    const unsigned char *mask = bytes + n;
-    char unmaskedData[N];
-    for (int x = 0; x < N; ++x)
-        unmaskedData[x] = bytes[x+n+4] ^ mask[x%4];
-
-    block(unmaskedData, N);
-
-    return n + 4 + N;
-}
-
-- (NSData *)readFrames:(NSData *)indata {
-    NSMutableData *data = [NSMutableData data];
-    uint x = 0;
-    while (x < indata.length) {
-        x += [self readFrame:indata.bytes + x length:indata.length block:^(char *rawdata, NSUInteger length){
-            [data appendBytes:rawdata length:length];
-        }];
-    }
-    return data;
-}
-
-- (void)send:(NSData *)payload client:(id)client {
-    if (!payload.length)
-        return;
-
-    if ([payload isKindOfClass:[NSString class]]) {
-        payload = [[(NSString *)payload dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
-    }
-    
-    NSMutableData *data = [NSMutableData dataWithLength:10];
-    char *header = data.mutableBytes;
-    header[0] = 0x81;
-
-    if (payload.length > 65535) {
-        header[1] = 127;
-        header[2] = (payload.length >> 56) & 255;
-        header[3] = (payload.length >> 48) & 255;
-        header[4] = (payload.length >> 40) & 255;
-        header[5] = (payload.length >> 32) & 255;
-        header[6] = (payload.length >> 24) & 255;
-        header[7] = (payload.length >> 16) & 255;
-        header[8] = (payload.length >>  8) & 255;
-        header[9] = payload.length & 255;
-    } else if (payload.length > 125) {
-        header[1] = 126;
-        header[2] = (payload.length >> 8) & 255;
-        header[3] = payload.length & 255;
-        data.length = 4;
-    } else {
-        header[1] = payload.length;
-        data.length = 2;
-    }
-
-    [data appendData:payload];
-
-    NSArray *cc = [client isKindOfClass:[NSArray class]] ? client : client ? @[client] : clients;
-    for (AsyncSocket *client in cc)
-        [client writeData:data withTimeout:-1 tag:3];
-}
-
-- (void)send:(id)payload {
-    [self send:payload client:nil];
+- (void)send:(id)object {
+    id payload = [object webSocketFrameData];
+    for (AsyncSocket *connection in connections)
+        [connection writeData:payload withTimeout:-1 tag:3];
 }
 
 
 #pragma mark - ASyncSocketDelegate
 
-- (void)onSocket:(AsyncSocket *)sock didAcceptNewSocket:(AsyncSocket *)client {
-    [clients addObject:client];
-    [client readDataWithTimeout:-1 tag:1];
+- (void)onSocket:(AsyncSocket *)sock didAcceptNewSocket:(AsyncSocket *)connection {
+    [connections addObject:connection];
+    [connection readDataWithTimeout:-1 tag:1];
 }
 
-- (void)onSocket:(AsyncSocket *)client didReadData:(NSData *)data withTag:(long)tag
-{    
+- (void)onSocket:(AsyncSocket *)connection didReadData:(NSData *)data withTag:(long)tag
+{
     if (tag == 1) { // waiting for handshake
-        [self respondToHandshake:data client:client];
+        [self respondToHandshake:data client:connection];
     } else {
-        [_delegate webSocketServer:self didReceiveData:[self readFrames:data]];
-        [client readDataWithTimeout:-1 tag:3];
+        [_delegate webSocketServer:self didReceiveData:[NSData dataWithWebSocketFrameData:data] fromConnection:connection];
+        [connection readDataWithTimeout:-1 tag:3];
     }
 }
 
-- (void)onSocket:(AsyncSocket *)client didWriteDataWithTag:(long)tag {
+- (void)onSocket:(AsyncSocket *)connection didWriteDataWithTag:(long)tag {
     switch (tag) {
-        case 2: {
-            id response = [_delegate webSocketServerDidAcceptConnection:self];
-            [self send:response client:client];
-            // fall through
-        }
+        case 2:
+            [_delegate webSocketServer:self didAcceptConnection:connection];
+            // FALL THROUGH
         case 3:
-            [client readDataWithTimeout:-1 tag:3];
+            [connection readDataWithTimeout:-1 tag:3];
     }
 }
 
-- (void)onSocketDidDisconnect:(AsyncSocket *)client {
-    [clients removeObjectIdenticalTo:client];
+- (void)onSocketDidDisconnect:(AsyncSocket *)connection {
+    [connections removeObjectIdenticalTo:connection];
     [_delegate webSocketServerClientDisconnected:self];
 }
 
@@ -255,6 +166,111 @@ static unsigned long long ntohll(unsigned long long v) {
     out[-2] = map[(input[19] & 0x0F) << 2];
     out[-1] = '=';
     return [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
+}
+
+- (id)webSocketFrameData {
+    return [[self dataUsingEncoding:NSUTF8StringEncoding] webSocketFrameData];
+}
+
+@end
+
+
+
+@implementation NSData (MBWebSocketServer)
+
+- (id)webSocketFrameData {
+    NSMutableData *data = [NSMutableData dataWithLength:10];
+    char *header = data.mutableBytes;
+    header[0] = 0x81;
+
+    if (self.length > 65535) {
+        header[1] = 127;
+        header[2] = (self.length >> 56) & 255;
+        header[3] = (self.length >> 48) & 255;
+        header[4] = (self.length >> 40) & 255;
+        header[5] = (self.length >> 32) & 255;
+        header[6] = (self.length >> 24) & 255;
+        header[7] = (self.length >> 16) & 255;
+        header[8] = (self.length >>  8) & 255;
+        header[9] = self.length & 255;
+    } else if (self.length > 125) {
+        header[1] = 126;
+        header[2] = (self.length >> 8) & 255;
+        header[3] = self.length & 255;
+        data.length = 4;
+    } else {
+        header[1] = self.length;
+        data.length = 2;
+    }
+
+    [data appendData:self];
+
+    return data;
+}
+
+static NSUInteger readFrame(const unsigned char *bytes, NSUInteger length, void (^block)(char *data, NSUInteger nbytes))
+{
+    if (length < 2)
+        @throw @"Bad frame";
+    if (!bytes[0] & 0x81)
+        @throw @"Cannot handle this websocket frame format!";
+    if (!bytes[1] & 0x80)
+        @throw @"Can only handle websocket frames with masks!";
+
+    unsigned n = 2;
+    uint64_t N = bytes[1] & 0x7f;
+    switch (N) {
+        case 126: {
+            if (length < 4)
+                @throw @"Bad frame";
+            uint16_t *p = (uint16_t *)(bytes + 2);
+            N = ntohs(*p);
+            n += 2;
+            break;
+        }
+        case 127: {
+            if (length < 10)
+                @throw @"Bad frame";
+            uint64_t *p = (uint64_t *)(bytes + 2);
+            N = ntohll(*p);
+            n += 8;
+        }
+        default:
+            break;
+    }
+
+    if (length < n + 4 + N)
+        @throw @"Bad frame";
+
+    const unsigned char *mask = bytes + n;
+    char unmaskedData[N];
+    for (int x = 0; x < N; ++x)
+        unmaskedData[x] = bytes[x+n+4] ^ mask[x%4];
+
+    block(unmaskedData, N);
+
+    return n + 4 + N;
+}
+
++ (NSData *)dataWithWebSocketFrameData:(NSData *)webSocketData {
+    NSMutableData *data = [NSMutableData data];
+    uint x = 0;
+    while (x < webSocketData.length) {
+        x += readFrame(webSocketData.bytes + x, webSocketData.length, ^(char *rawdata, NSUInteger length){
+            [data appendBytes:rawdata length:length];
+        });
+    }
+    return data;
+}
+
+@end
+
+
+
+@implementation AsyncSocket (MBWebSocketServer)
+
+- (void)writeWebSocketFrame:(id)object {
+    [self writeData:[object webSocketFrameData] withTimeout:-1 tag:3];
 }
 
 @end

@@ -93,8 +93,14 @@ static unsigned long long ntohll(unsigned long long v) {
     if (tag == 1) { // waiting for handshake
         [self respondToHandshake:data client:connection];
     } else {
-        [_delegate webSocketServer:self didReceiveData:[NSData dataWithWebSocketFrameData:data] fromConnection:connection];
-        [connection readDataWithTimeout:-1 tag:3];
+        @try {
+            [_delegate webSocketServer:self didReceiveData:[NSData dataWithWebSocketFrameData:data] fromConnection:connection];
+            [connection readDataWithTimeout:-1 tag:3];
+        }
+        @catch (NSString *msg) {
+            id error = [NSError errorWithDomain:@"com.methylblue" code:1 userInfo:@{NSLocalizedDescriptionKey: msg}];
+            [_delegate webSocketServer:self couldNotParseRawData:data fromConnection:connection error:error];
+        }
     }
 }
 

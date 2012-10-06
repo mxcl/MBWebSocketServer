@@ -31,6 +31,9 @@
 - (void)webSocketServer:(MBWebSocketServer *)webSocketServer didAcceptConnection:(AsyncSocket *)connection;
 - (void)webSocketServerClientDisconnected:(MBWebSocketServer *)webSocketServer;
 - (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data fromConnection:(AsyncSocket *)connection;
+
+// data is passed to you as it was received from the socket, ie. with header & masked
+- (void)webSocketServer:(MBWebSocketServer *)webSocketServer couldNotParseRawData:(NSData *)rawData fromConnection:(AsyncSocket *)connection error:(NSError *)error;
 @end
 
 

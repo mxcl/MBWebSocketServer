@@ -263,7 +263,7 @@ static NSUInteger readFrame(const unsigned char *bytes, NSUInteger length, void 
     NSMutableData *data = [NSMutableData data];
     uint x = 0;
     while (x < webSocketData.length) {
-        x += readFrame(webSocketData.bytes + x, webSocketData.length, ^(char *rawdata, NSUInteger length){
+        x += readFrame(webSocketData.bytes + x, webSocketData.length - x, ^(char *rawdata, NSUInteger length){
             [data appendBytes:rawdata length:length];
         });
     }

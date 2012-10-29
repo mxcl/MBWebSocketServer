@@ -4,8 +4,7 @@
 #import <CommonCrypto/CommonDigest.h>
 #import "MBWebSocketServer.h"
 
-
-@interface MBWebSocketServer () <AsyncSocketDelegate>
+@interface MBWebSocketServer () <GCDAsyncSocketDelegate>
 @end
 
 @interface NSArray (MBWebSocketServer)
@@ -32,7 +31,7 @@ static unsigned long long ntohll(unsigned long long v) {
 - (id)initWithPort:(NSUInteger)port delegate:(id<MBWebSocketServerDelegate>)delegate {
     _port = port;
     _delegate = delegate;
-    socket = [[AsyncSocket alloc] initWithDelegate:self];
+    socket = [[GCDAsyncSocket alloc] initWithDelegate:self delegateQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)];
     connections = [NSMutableArray new];
 
     NSError *error = nil;
@@ -54,7 +53,7 @@ static unsigned long long ntohll(unsigned long long v) {
     return connections.count;
 }
 
-- (void)respondToHandshake:(NSData *)data client:(AsyncSocket *)client {
+- (void)respondToHandshake:(NSData *)data client:(GCDAsyncSocket *)client {
     NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 
     NSArray *strings = [string componentsSeparatedByString:@"\r\n"];
@@ -76,19 +75,19 @@ static unsigned long long ntohll(unsigned long long v) {
 
 - (void)send:(id)object {
     id payload = [object webSocketFrameData];
-    for (AsyncSocket *connection in connections)
+    for (GCDAsyncSocket *connection in connections)
         [connection writeData:payload withTimeout:-1 tag:3];
 }
 
 
 #pragma mark - ASyncSocketDelegate
 
-- (void)onSocket:(AsyncSocket *)sock didAcceptNewSocket:(AsyncSocket *)connection {
+- (void)socket:(GCDAsyncSocket *)sock didAcceptNewSocket:(GCDAsyncSocket *)connection {
     [connections addObject:connection];
     [connection readDataWithTimeout:-1 tag:1];
 }
 
-- (void)onSocket:(AsyncSocket *)connection didReadData:(NSData *)data withTag:(long)tag
+- (void)socket:(GCDAsyncSocket *)connection didReadData:(NSData *)data withTag:(long)tag
 {
     if (tag == 1) { // waiting for handshake
         [self respondToHandshake:data client:connection];
@@ -97,25 +96,35 @@ static unsigned long long ntohll(unsigned long long v) {
             data = [NSData dataWithWebSocketFrameData:data];
         } @catch (NSString *msg) {
             id error = [NSError errorWithDomain:@"com.methylblue" code:1 userInfo:@{NSLocalizedDescriptionKey: msg}];
-            [_delegate webSocketServer:self couldNotParseRawData:data fromConnection:connection error:error];
+            [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                [_delegate webSocketServer:self couldNotParseRawData:data fromConnection:connection error:error];
+            }];
             return;
         }
-        [_delegate webSocketServer:self didReceiveData:data fromConnection:connection];
+        [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            [_delegate webSocketServer:self didReceiveData:data fromConnection:connection];
+        }];
         [connection readDataWithTimeout:-1 tag:3];
     }
 }
 
-- (void)onSocket:(AsyncSocket *)connection didWriteDataWithTag:(long)tag {
+- (void)socket:(GCDAsyncSocket *)connection didWriteDataWithTag:(long)tag {
+    NSCAssert(![NSThread isMainThread], nil);
     switch (tag) {
-        case 2:
-            [_delegate webSocketServer:self didAcceptConnection:connection];
+        case 2: {
+            [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                [_delegate webSocketServer:self didAcceptConnection:connection];
+            }];
+        }
             // FALL THROUGH
         case 3:
             [connection readDataWithTimeout:-1 tag:3];
     }
 }
 
-- (void)onSocketDidDisconnect:(AsyncSocket *)connection {
+- (void)socketDidDisconnect:(GCDAsyncSocket *)connection {
+    NSCAssert([NSThread isMainThread], nil);
+
     [connections removeObjectIdenticalTo:connection];
     [_delegate webSocketServerClientDisconnected:self];
 }
@@ -274,7 +283,7 @@ static NSUInteger readFrame(const unsigned char *bytes, NSUInteger length, void 
 
 
 
-@implementation AsyncSocket (MBWebSocketServer)
+@implementation GCDAsyncSocket (MBWebSocketServer)
 
 - (void)writeWebSocketFrame:(id)object {
     [self writeData:[object webSocketFrameData] withTimeout:-1 tag:3];

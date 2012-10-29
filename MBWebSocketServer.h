@@ -18,6 +18,8 @@
 
 // Sends this data to all open connections. The object must respond to
 // webSocketFrameData. We provide implementations for NSData and NSString.
+// You may like to, eg: provide implementations for NSDictionary, encoding into a
+// JSON string before calling [NSString webSocketFrameData].
 - (void)send:(id)object;
 
 @property (nonatomic, readonly) NSUInteger port;
@@ -29,7 +31,7 @@
 
 @protocol MBWebSocketServerDelegate
 - (void)webSocketServer:(MBWebSocketServer *)webSocketServer didAcceptConnection:(GCDAsyncSocket *)connection;
-- (void)webSocketServerClientDisconnected:(MBWebSocketServer *)webSocketServer;
+- (void)webSocketServer:(MBWebSocketServer *)webSocketServer clientDisconnected:(GCDAsyncSocket *)connection;
 - (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data fromConnection:(GCDAsyncSocket *)connection;
 
 // data is passed to you as it was received from the socket, ie. with header & masked
@@ -43,6 +45,5 @@
 
 
 @interface NSData (MBWebSocketServer)
-- (id)webSocketFrameData;
-+ (NSData *)dataWithWebSocketFrameData:(NSData *)webSocketData;
+- (NSData *)webSocketFrameData;
 @end

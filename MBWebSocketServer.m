@@ -7,11 +7,6 @@
 @interface MBWebSocketServer () <GCDAsyncSocketDelegate>
 @end
 
-@interface NSArray (MBWebSocketServer)
-- (id)secWebSocketKey;
-- (id)secWebSocketAccept;
-@end
-
 @interface NSString (MBWebSocketServer)
 - (id)sha1base64;
 @end
@@ -53,34 +48,36 @@ static unsigned long long ntohll(unsigned long long v) {
     return connections.count;
 }
 
-- (void)respondToHandshake:(NSData *)data client:(GCDAsyncSocket *)client {
-    NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-
-    NSArray *strings = [string componentsSeparatedByString:@"\r\n"];
-    
-    if (strings.count == 0 || ![strings[0] isEqualToString:@"GET / HTTP/1.1"]) {
-        NSLog(@"MBWebSocketServer invalid handshake from client");
-        return [client disconnect];
-    }
-    
-    NSString *response = [NSString stringWithFormat:
-                          @"HTTP/1.1 101 Web Socket Protocol Handshake\r\n"
-                           "Upgrade: websocket\r\n"
-                           "Connection: Upgrade\r\n"
-                           "Sec-WebSocket-Accept: %@\r\n\r\n",
-                          [strings secWebSocketAccept]];
-    
-    [client writeData:[response dataUsingEncoding:NSUTF8StringEncoding] withTimeout:-1 tag:2];
-}
-
 - (void)send:(id)object {
     id payload = [object webSocketFrameData];
     for (GCDAsyncSocket *connection in connections)
         [connection writeData:payload withTimeout:-1 tag:3];
 }
 
+- (NSString *)handshakeResponseForData:(NSData *)data {
+    NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    NSArray *strings = [string componentsSeparatedByString:@"\r\n"];
 
-#pragma mark - ASyncSocketDelegate
+    if (strings.count && [strings[0] isEqualToString:@"GET / HTTP/1.1"])
+        for (NSString *line in strings) {
+            NSArray *parts = [line componentsSeparatedByString:@":"];
+            if (parts.count == 2 && [parts[0] isEqualToString:@"Sec-WebSocket-Key"]) {
+                id key = [parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                id secWebSocketAccept = [[key stringByAppendingString:@"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"] sha1base64];
+                return [NSString stringWithFormat:
+                        @"HTTP/1.1 101 Web Socket Protocol Handshake\r\n"
+                        "Upgrade: websocket\r\n"
+                        "Connection: Upgrade\r\n"
+                        "Sec-WebSocket-Accept: %@\r\n\r\n",
+                        secWebSocketAccept];
+            }
+        }
+
+    @throw @"Invalid handshake from client";
+}
+
+
+#pragma mark - GCDAsyncSocketDelegate
 
 - (void)socket:(GCDAsyncSocket *)sock didAcceptNewSocket:(GCDAsyncSocket *)connection {
     [connections addObject:connection];
@@ -89,66 +86,73 @@ static unsigned long long ntohll(unsigned long long v) {
 
 - (void)socket:(GCDAsyncSocket *)connection didReadData:(NSData *)data withTag:(long)tag
 {
-    if (tag == 1) { // waiting for handshake
-        [self respondToHandshake:data client:connection];
-    } else {
-        @try {
-            data = [NSData dataWithWebSocketFrameData:data];
-        } @catch (NSString *msg) {
-            id error = [NSError errorWithDomain:@"com.methylblue" code:1 userInfo:@{NSLocalizedDescriptionKey: msg}];
-            [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                [_delegate webSocketServer:self couldNotParseRawData:data fromConnection:connection error:error];
-            }];
-            return;
+    @try {
+        const unsigned char *bytes = data.bytes;
+        switch (tag) {
+            case 1: {
+                NSString *handshake = [self handshakeResponseForData:data];
+                [connection writeData:[handshake dataUsingEncoding:NSUTF8StringEncoding] withTimeout:-1 tag:2];
+                break;
+            }
+            case 4: {
+                uint64_t const N = bytes[1] & 0x7f;
+
+                if (!bytes[0] & 0x81)
+                    @throw @"Cannot handle this websocket frame format!";
+                if (!bytes[1] & 0x80)
+                    @throw @"Can only handle websocket frames with masks!";
+                if (N >= 126)
+                    [connection readDataToLength:N == 126 ? 2 : 8 withTimeout:-1 buffer:nil bufferOffset:0 tag:5];
+                else
+                    [connection readDataToLength:N + 4 withTimeout:-1 buffer:nil bufferOffset:0 tag:6];
+                break;
+            }
+            case 5: {
+                if (data.length == 2) {
+                    uint16_t *p = (uint16_t *)bytes;
+                    [connection readDataToLength:ntohs(*p) + 4 withTimeout:-1 buffer:nil bufferOffset:0 tag:6];
+                } else {
+                    uint64_t *p = (uint64_t *)bytes;
+                    [connection readDataToLength:ntohll(*p) + 4 withTimeout:-1 buffer:nil bufferOffset:0 tag:6];
+                }
+                break;
+            }
+            case 6: {
+                NSMutableData *unmaskedData = [NSMutableData dataWithCapacity:data.length - 4];
+                for (int x = 4; x < data.length; ++x) {
+                    char c = bytes[x] ^ bytes[x%4];
+                    [unmaskedData appendBytes:&c length:1];
+                }
+
+                [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+                    [_delegate webSocketServer:self didReceiveData:unmaskedData fromConnection:connection];
+                }];
+
+                [connection readDataToLength:2 withTimeout:-1 buffer:nil bufferOffset:0 tag:4];
+                break;
+            }
         }
-        [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-            [_delegate webSocketServer:self didReceiveData:data fromConnection:connection];
-        }];
-        [connection readDataWithTimeout:-1 tag:3];
+    }
+    @catch (id e) {
+        NSLog(@"MBWebSocketServer: %@", e);
+        [connection disconnect];
     }
 }
 
 - (void)socket:(GCDAsyncSocket *)connection didWriteDataWithTag:(long)tag {
-    NSCAssert(![NSThread isMainThread], nil);
-    switch (tag) {
-        case 2: {
-            [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                [_delegate webSocketServer:self didAcceptConnection:connection];
-            }];
-        }
-            // FALL THROUGH
-        case 3:
-            [connection readDataWithTimeout:-1 tag:3];
+    if (tag == 2) {
+        [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            [_delegate webSocketServer:self didAcceptConnection:connection];
+        }];
+        [connection readDataToLength:2 withTimeout:-1 buffer:nil bufferOffset:0 tag:4];
     }
 }
 
-- (void)socketDidDisconnect:(GCDAsyncSocket *)connection {
-    NSCAssert([NSThread isMainThread], nil);
-
+- (void)socketDidDisconnect:(GCDAsyncSocket *)connection withError:(NSError *)error {
     [connections removeObjectIdenticalTo:connection];
-    [_delegate webSocketServerClientDisconnected:self];
-}
-
-@end
-
-
-
-@implementation NSArray (MBWebSocketServer)
-
-- (id)secWebSocketKey {
-    for (NSString *line in self) {
-        //TODO better efficiency!
-        NSArray *parts = [line componentsSeparatedByString:@":"];
-        if (parts.count == 2) {
-            if ([parts[0] isEqualToString:@"Sec-WebSocket-Key"])
-                return [parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];;
-        }
-    }
-    return nil;
-}
-
-- (id)secWebSocketAccept {
-    return [[NSString stringWithFormat:@"%@%@", [self secWebSocketKey], @"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"] sha1base64];
+    [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+        [_delegate webSocketServer:self clientDisconnected:connection];
+    }];
 }
 
 @end
@@ -221,61 +225,6 @@ static unsigned long long ntohll(unsigned long long v) {
 
     [data appendData:self];
 
-    return data;
-}
-
-static NSUInteger readFrame(const unsigned char *bytes, NSUInteger length, void (^block)(char *data, NSUInteger nbytes))
-{
-    if (length < 2)
-        @throw @"Bad frame";
-    if (!bytes[0] & 0x81)
-        @throw @"Cannot handle this websocket frame format!";
-    if (!bytes[1] & 0x80)
-        @throw @"Can only handle websocket frames with masks!";
-
-    unsigned n = 2;
-    uint64_t N = bytes[1] & 0x7f;
-    switch (N) {
-        case 126: {
-            if (length < 4)
-                @throw @"Bad frame";
-            uint16_t *p = (uint16_t *)(bytes + 2);
-            N = ntohs(*p);
-            n += 2;
-            break;
-        }
-        case 127: {
-            if (length < 10)
-                @throw @"Bad frame";
-            uint64_t *p = (uint64_t *)(bytes + 2);
-            N = ntohll(*p);
-            n += 8;
-        }
-        default:
-            break;
-    }
-
-    if (length < n + 4 + N)
-        @throw @"Bad frame";
-
-    const unsigned char *mask = bytes + n;
-    char unmaskedData[N];
-    for (int x = 0; x < N; ++x)
-        unmaskedData[x] = bytes[x+n+4] ^ mask[x%4];
-
-    block(unmaskedData, N);
-
-    return n + 4 + N;
-}
-
-+ (NSData *)dataWithWebSocketFrameData:(NSData *)webSocketData {
-    NSMutableData *data = [NSMutableData data];
-    uint x = 0;
-    while (x < webSocketData.length) {
-        x += readFrame(webSocketData.bytes + x, webSocketData.length - x, ^(char *rawdata, NSUInteger length){
-            [data appendBytes:rawdata length:length];
-        });
-    }
     return data;
 }
 

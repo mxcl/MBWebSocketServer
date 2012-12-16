@@ -1,5 +1,5 @@
-MBWebSocket
-===========
+MBWebSocketServer
+=================
 A websocket *server implementation*, (you cannot instantiate an instance that
 does not bind to a port).
 
@@ -23,21 +23,26 @@ Example Usage
     self.ws = [[MBWebSocketServer alloc] initWithPort:13581 delegate:self];
 }
 
-- (void)webSocketServerDidConnect:(MBWebSocketServer *)webSocket {
-    NSLog(@"Connected to a client (and we only work with one for now!)");
+- (void)webSocketServer:(MBWebSocketServer *)webSocketServer didAcceptConnection:(GCDAsyncSocket *)connection {
+    NSLog(@"Connected to a client, we accept multiple connections");
 }
 
-- (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data
-{
+- (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data fromConnection:(GCDAsyncSocket *) {
     NSLog(@"%@", [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]);
-    [webSocket send:@"Thanks!"];
+
+    [connection writeWebSocketFrame:@"Thanks for the data!"]; // you can write NSStrings or NSDatas
 }
 
-- (void)webSocketServerDidDisconnect:(MBWebSocketServer *)webSocket {
-    NSLog(@"Disconnected from client");
+- (void)webSocketServer:(MBWebSocketServer *)webSocketServer clientDisconnected:(GCDAsyncSocket *)connection {
+    NSLog(@"Disconnected from client: %@", connection);
+}
+
+- (void)webSocketServer:(MBWebSocketServer *)webSocketServer couldNotParseRawData:(NSData *)rawData fromConnection:(GCDAsyncSocket *)connection error:(NSError *)error {
+    NSLog(@"MBWebSocketServer error: %@", error);
 }
 
 ```
+
 
 Author
 ------

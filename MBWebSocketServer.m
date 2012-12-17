@@ -133,9 +133,11 @@ static unsigned long long ntohll(unsigned long long v) {
             }
         }
     }
-    @catch (id e) {
-        NSLog(@"MBWebSocketServer: %@", e);
-        [connection disconnect];
+    @catch (id msg) {
+        id err = [NSError errorWithDomain:@"com.methylblue.webSocketServer" code:1 userInfo:@{NSLocalizedDescriptionKey: msg}];
+        [_delegate webSocketServer:self couldNotParseRawData:data fromConnection:connection error:err];
+        if (tag < 4)
+            [connection disconnect];
     }
 }
 

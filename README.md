@@ -11,6 +11,10 @@ Tested against recent Chrome, Safari and Firefox versions. Only tested on Mac.
 
 If you want a client implementation, use Square’s SocketRocket.
 
+Caveats
+-------
+* There's no support for fragmented frames.
+
 Requirements
 ------------
 * ARC or Garbage Collection

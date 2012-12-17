@@ -24,7 +24,6 @@
 
 @property (nonatomic, readonly) NSUInteger port;
 @property (nonatomic, weak) id<MBWebSocketServerDelegate> delegate;
-@property (nonatomic, readonly) BOOL connected;
 @property (nonatomic, readonly) NSUInteger clientCount;
 @end
 
@@ -34,9 +33,10 @@
 - (void)webSocketServer:(MBWebSocketServer *)webSocketServer clientDisconnected:(GCDAsyncSocket *)connection;
 - (void)webSocketServer:(MBWebSocketServer *)webSocket didReceiveData:(NSData *)data fromConnection:(GCDAsyncSocket *)connection;
 
-// data is passed to you as it was received from the socket, ie. with header & masked
-// if the error occurred before or during handshake, we disconnect the connection
-// immediately after your delegate call returns.
+// Data is passed to you as it was received from the socket, ie. with header & masked
+// We disconnect the connection immediately after your delegate call returns.
+// This always disconnect behavior sucks and should be fixed, but requires more
+// intelligent error handling, so feel free to fix that.
 - (void)webSocketServer:(MBWebSocketServer *)webSocketServer couldNotParseRawData:(NSData *)rawData fromConnection:(GCDAsyncSocket *)connection error:(NSError *)error;
 @end
 

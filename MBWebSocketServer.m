@@ -96,26 +96,39 @@ static unsigned long long ntohll(unsigned long long v) {
                 // TODO support fragmented frames (first bit unset in control frame)
                 if (!bytes[0] & 0x80)
                     @throw @"Can't decode fragmented frames!";
+                if (!bytes[1] & 0x80)
+                    @throw @"Can only handle websocket frames with masks!";
 
                 switch (opcode) {
-                    case 1:  //  text frame
-                    case 8:  // close frame http://tools.ietf.org/html/rfc6455#section-5.5.1
-                    case 9:  //  ping frame http://tools.ietf.org/html/rfc6455#section-5.5.2
-                        if (!bytes[1] & 0x80)
-                            @throw @"Can only handle websocket frames with masks!";
-                        if (N >= 126)
+                    case 1:
+                    case 2:
+                        if (N >= 126) {
                             [connection readDataToLength:N == 126 ? 2 : 8 withTimeout:-1 buffer:nil bufferOffset:0 tag:16 + opcode];
-                        else
+                            break;
+                        }
+
+                        // ELSE CONTINUE!
+
+                    case 8:  // close frame http://tools.ietf.org/html/rfc6455#section-5.5.1
+                    case 9:  // ping frame http://tools.ietf.org/html/rfc6455#section-5.5.2
+                        if (N >= 126) {
+                            // CLOSE with status code 1002 because CONTROL-FRAMES are not
+                            // allowed to have payloads greater than 125 characters.
+                            char rsp[4] = {0x88, 2, 0xEA, 0x3};
+                            [connection writeData:[NSData dataWithBytes:rsp length:4] withTimeout:-1 tag:-1];
+                            [connection disconnect];
+                        } else {
                             [connection readDataToLength:N + 4 withTimeout:-1 buffer:nil bufferOffset:0 tag:32 + opcode];
+                        }
                         break;
+
                     default:
-                        @throw @"Cannot handle this websocket frame format!";
+                        @throw @"Cannot handle this websocket frame opcode!";
                 }
                 break;
             }
-            case 0x11: // figure out payload length
-            case 0x18:
-            case 0x19: {
+            case 0x11:
+            case 0x12: { // figure out payload length
                 uint64_t N;
                 if (data.length == 2) {
                     uint16_t *p = (uint16_t *)bytes;
@@ -128,6 +141,7 @@ static unsigned long long ntohll(unsigned long long v) {
                 break;
             }
             case 0x21: // read complete payload
+            case 0x22:
             case 0x28:
             case 0x29: {
                 NSMutableData *unmaskedData = [NSMutableData dataWithCapacity:data.length - 4];
@@ -160,6 +174,8 @@ static unsigned long long ntohll(unsigned long long v) {
                 [connection readDataToLength:2 withTimeout:-1 buffer:nil bufferOffset:0 tag:4];
                 break;
             }
+            default:
+                @throw [NSString stringWithFormat:@"Unhandled tag: %ld", tag];
         }
     }
     @catch (id msg) {

@@ -1,3 +1,10 @@
+Warning!
+========
+I do not maintain this anymore. You should become the new active fork, or ask
+me to make you a collaborator here.
+
+The last time I *did* use it, it was working well.
+
 MBWebSocketServer
 =================
 A websocket *server implementation*, (you cannot instantiate an instance that
